@@ -135,12 +135,57 @@ def getgecko(url):
         geckojson = {}
     return geckojson, connectfail
 
+def get_stock_data(symbol):
+    api_key = 'SOTTTMVQ54WQCQVE'
+    base_url = 'https://www.alphavantage.co/query?'
+    function = 'TIME_SERIES_INTRADAY'
+    interval = '5min'
+    url = f'{base_url}function={function}&symbol={symbol}&interval={interval}&apikey={api_key}'
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if 'Time Series (5min)' in data:
+            latest_time = list(data['Time Series (5min)'].keys())[0]
+            latest_data = data['Time Series (5min)'][latest_time]
+            price = float(latest_data['4. close'])
+            return price
+        else:
+            logging.error(f"Error fetching data for {symbol}: {data}")
+            return None
+    except Exception as e:
+        logging.error(f"Exception fetching data for {symbol}: {e}")
+        return None
+
+def get_stock_logo(symbol):
+    logo_url = f'https://logo.clearbit.com/{symbol}.com'
+    try:
+        response = requests.get(logo_url, stream=True)
+        if response.status_code == 200:
+            logo_path = os.path.join(picdir, f'{symbol}.bmp')
+            with open(logo_path, 'wb') as out_file:
+                out_file.write(response.content)
+            return logo_path
+        else:
+            logging.error(f"Error fetching logo for {symbol}")
+            return None
+    except Exception as e:
+        logging.error(f"Exception fetching logo for {symbol}: {e}")
+        return None
+
 
 def getData(config, other):
     """
     The function to grab the data (TO DO: need to test properly)
     """
-
+ whichcoin, fiat = configtocoinandfiat(config)
+    if whichcoin in config["ticker"]["stocks"].split(","):
+        price = get_stock_data(whichcoin)
+        if price:
+            return [price], other
+        else:
+            return [], other
+    else:
     sleep_time = 10
     num_retries = 5
     whichcoin, fiat = configtocoinandfiat(config)
@@ -313,7 +358,7 @@ def custom_format_currency(value, currency, locale):
 def updateDisplay(config, pricestack, other):
     """
     Takes the price data, the desired coin/fiat combo along with the config info for formatting
-    if config is re-written following adustment we could avoid passing the last two arguments as
+    if config is re-written following adjustment we could avoid passing the last two arguments as
     they will just be the first two items of their string in config
     """
     with open(configfile) as f:
@@ -324,146 +369,92 @@ def updateDisplay(config, pricestack, other):
     whichcoin, fiat = configtocoinandfiat(config)
     days_ago = int(config["ticker"]["sparklinedays"])
     pricenow = pricestack[-1]
-    if config["display"]["inverted"] == True:
-        currencythumbnail = "currency/" + whichcoin + "INV.bmp"
+
+    # Überprüfen, ob es sich um eine Aktie handelt
+    if whichcoin in config["ticker"]["stocks"].split(","):
+        tokenfilename = get_stock_logo(whichcoin)
     else:
-        currencythumbnail = "currency/" + whichcoin + ".bmp"
-    tokenfilename = os.path.join(picdir, currencythumbnail)
-    sparkbitmap = Image.open(os.path.join(picdir, "spark.bmp"))
-    ATHbitmap = Image.open(os.path.join(picdir, "ATH.bmp"))
-    #   Check for token image, if there isn't one, get on off coingecko, resize it and pop it on a white background
-    if os.path.isfile(tokenfilename):
-        logging.debug("Getting token Image from Image directory")
-        tokenimage = Image.open(tokenfilename).convert("RGBA")
-    else:
-        logging.debug("Getting token Image from Coingecko")
-        tokenimageurl = (
-            "https://api.coingecko.com/api/v3/coins/"
-            + whichcoin
-            + "?tickers=false&market_data=false&community_data=false&developer_data=false&sparkline=false"
-        )
-        rawimage = requests.get(tokenimageurl, headers=headers).json()
-        tokenimage = Image.open(
-            requests.get(rawimage["image"]["large"], headers=headers, stream=True).raw
-        ).convert("RGBA")
-        resize = 100, 100
-        tokenimage.thumbnail(resize, Image.BICUBIC)
-        # If inverted is true, invert the token symbol before placing if on the white BG so that it is uninverted at the end - this will make things more
-        # legible on a black display
+        # Bestehende Logik für Kryptowährungen
         if config["display"]["inverted"] == True:
-            # PIL doesnt like to invert binary images, so convert to RGB, invert and then convert back to RGBA
-            tokenimage = ImageOps.invert(tokenimage.convert("RGB"))
-            tokenimage = tokenimage.convert("RGBA")
-        # Create a white rgba background with a 10 pixel border
-        new_image = Image.new("RGBA", (120, 120), "WHITE")
-        new_image.paste(tokenimage, (10, 10), tokenimage)
-        tokenimage = new_image
-        tokenimage.thumbnail((100, 100), Image.BICUBIC)
-        tokenimage.save(tokenfilename)
+            currencythumbnail = "currency/" + whichcoin + "INV.bmp"
+        else:
+            currencythumbnail = "currency/" + whichcoin + ".bmp"
+        tokenfilename = os.path.join(picdir, currencythumbnail)
+    
+    if tokenfilename:
+        tokenimage = Image.open(tokenfilename).convert("RGBA")
+    
+    # Erstellen eines neuen Bildes
+    if config["display"]["orientation"] == 0 or config["display"]["orientation"] == 180:
+        image = Image.new("L", (176, 264), 255)
+    else:
+        image = Image.new("L", (264, 176), 255)
+    
+    draw = ImageDraw.Draw(image)
+    
+    # Preisänderung berechnen
     pricechangeraw = round((pricestack[-1] - pricestack[0]) / pricestack[-1] * 100, 2)
     if pricechangeraw >= 10:
         pricechange = str("%+d" % pricechangeraw) + "%"
     else:
         pricechange = str("%+.2f" % pricechangeraw) + "%"
+    
+    # Zeitstempel
     if "24h" in config["display"] and config["display"]["24h"]:
         timestamp = str(time.strftime("%-H:%M, %d %b %Y"))
     else:
         timestamp = str(time.strftime("%-I:%M %p, %d %b %Y"))
-    # This is where a locale change can be made
+    
+    # Lokale Einstellungen
     if "locale" in config["display"]:
         localetag = config["display"]["locale"]
     else:
-        # This is a way of forcing the locale currency info eg 'de_DE' for German formatting
-        localetag = "en_US"
-    fontreduce = 0  # This is an adjustment that needs to be applied to coins with very low fiat value per coin
+        localetag = "de_DE"
+    
+    fontreduce = 0
     fiatupper = fiat.upper()
     if fiat.upper() == "USDT":
         fiatupper = "USD"
     if fiat.upper() == "BTC":
         fiatupper = "₿"
+    
     if pricenow > 10000:
-        # round to nearest whole unit of currency, this is an ugly hack for now
         pricestring = custom_format_currency(int(pricenow), fiatupper, localetag)
     elif pricenow > 0.01:
-        pricestring = format_currency(
-            pricenow, fiatupper, locale=localetag, decimal_quantization=False
-        )
+        pricestring = format_currency(pricenow, fiatupper, locale=localetag, decimal_quantization=False)
     else:
-        # looks like you have a coin with a tiny value per coin, drop the font size, not ideal but better than just printing SHITCOIN
-        pricestring = format_currency(
-            pricenow, fiatupper, locale=localetag, decimal_quantization=False
-        )
+        pricestring = format_currency(pricenow, fiatupper, locale=localetag, decimal_quantization=False)
+    
     if len(pricestring) > 9:
         fontreduce = 15
-
+    
+    # Text und Bild auf dem Display platzieren
     if config["display"]["orientation"] == 0 or config["display"]["orientation"] == 180:
-        # 255: clear the image with white
-        image = Image.new("L", (176, 264), 255)
-        draw = ImageDraw.Draw(image)
-        draw.text((110, 80), str(days_ago) + "day :", font=font_date, fill=0)
+        draw.text((110, 80), str(days_ago) + " day :", font=font_date, fill=0)
         draw.text((110, 95), pricechange, font=font_date, fill=0)
-        writewrappedlines(
-            image, pricestring, 40 - fontreduce, 65, 8, 15, "IBMPlexSans-Medium"
-        )
+        writewrappedlines(image, pricestring, 40 - fontreduce, 65, 8, 15, "IBMPlexSans-Medium")
         draw.text((10, 10), timestamp, font=font_date, fill=0)
-        image.paste(tokenimage, (10, 25))
+        if tokenfilename:
+            image.paste(tokenimage, (10, 25))
         image.paste(sparkbitmap, (10, 125))
         if config["display"]["orientation"] == 180:
             image = image.rotate(180, expand=True)
-    if (
-        config["display"]["orientation"] == 90
-        or config["display"]["orientation"] == 270
-    ):
-        # 255: clear the image with white
-        image = Image.new("L", (264, 176), 255)
-        draw = ImageDraw.Draw(image)
-        if other["ATH"] == True:
-            image.paste(ATHbitmap, (205, 75))
-        draw.text(
-            (110, 90), str(days_ago) + " day : " + pricechange, font=font_date, fill=0
-        )
+    else:
+        draw.text((110, 90), str(days_ago) + " day : " + pricechange, font=font_date, fill=0)
         if "showvolume" in config["display"] and config["display"]["showvolume"]:
-            draw.text(
-                (110, 105),
-                "24h vol : " + human_format(other["volume"]),
-                font=font_date,
-                fill=0,
-            )
-        writewrappedlines(
-            image, pricestring, 50 - fontreduce, 50, 8, 15, "IBMPlexSans-Medium"
-        )
+            draw.text((110, 105), "24h vol : " + human_format(other["volume"]), font=font_date, fill=0)
+        writewrappedlines(image, pricestring, 50 - fontreduce, 50, 8, 15, "IBMPlexSans-Medium")
         image.paste(sparkbitmap, (80, 40))
-        image.paste(tokenimage, (0, 10))
-        # Don't show rank for #1 coin, #1 doesn't need to show off
-        if (
-            "showrank" in config["display"]
-            and config["display"]["showrank"]
-            and other["market_cap_rank"] > 1
-        ):
-            draw.text(
-                (10, 105),
-                "Rank: " + str("%d" % other["market_cap_rank"]),
-                font=font_date,
-                fill=0,
-            )
-        if (config["display"]["trendingmode"] == True) and not (
-            str(whichcoin) in originalcoin_list
-        ):
-            draw.text((95, 28), whichcoin, font=font_date, fill=0)
-        #       draw.text((5,110),"In retrospect, it was inevitable",font =font_date,fill = 0)
-        draw.text((95, 15), timestamp, font=font_date, fill=0)
-        if config["ticker"]["exchange"] != "default":
-            draw.text((95, 30), config["ticker"]["exchange"], font=font_date, fill=0)
+        if tokenfilename:
+            image.paste(tokenimage, (0, 10))
         if config["display"]["orientation"] == 270:
             image = image.rotate(180, expand=True)
-    #       This is a hack to deal with the mirroring that goes on in older waveshare libraries Uncomment line below if needed
-    #       image = ImageOps.mirror(image)
-    #   If the display is inverted, invert the image usinng ImageOps
+    
+    # Invertieren des Bildes, falls erforderlich
     if config["display"]["inverted"] == True:
         image = ImageOps.invert(image)
-    #   Return the ticker image
+    
     return image
-
 
 def currencystringtolist(currstring):
     # Takes the string for currencies in the config.yaml file and turns it into a list
@@ -534,21 +525,25 @@ def keypress(channel):
     with open(configfile) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     lastcoinfetch = time.time()
+    
     if channel == 5 and button_pressed == 0:
-        logging.info("Cycle currencies")
+        logging.info("Cycle cryptocurrencies")
         button_pressed = 1
         crypto_list = currencycycle(config["ticker"]["currency"])
         config["ticker"]["currency"] = ",".join(crypto_list)
         lastcoinfetch = fullupdate(config, lastcoinfetch)
         configwrite(config)
         return
+    
     elif channel == 6 and button_pressed == 0:
-        logging.info("Rotate - 90")
+        logging.info("Cycle stocks")
         button_pressed = 1
-        config["display"]["orientation"] = (config["display"]["orientation"] + 90) % 360
+        stock_list = currencycycle(config["ticker"]["stocks"])
+        config["ticker"]["stocks"] = ",".join(stock_list)
         lastcoinfetch = fullupdate(config, lastcoinfetch)
         configwrite(config)
         return
+    
     elif channel == 13 and button_pressed == 0:
         logging.info("Invert Display")
         button_pressed = 1
@@ -556,6 +551,7 @@ def keypress(channel):
         lastcoinfetch = fullupdate(config, lastcoinfetch)
         configwrite(config)
         return
+    
     elif channel == 19 and button_pressed == 0:
         logging.info("Cycle fiat")
         button_pressed = 1
@@ -564,6 +560,7 @@ def keypress(channel):
         lastcoinfetch = fullupdate(config, lastcoinfetch)
         configwrite(config)
         return
+    
     return
 
 
