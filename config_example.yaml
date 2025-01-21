@@ -7,10 +7,11 @@ display:
   showvolume: false # Show volume (in fiat currency)
   showrank: false # Show ranking (by volume)
   24h: true # true for 24h clock, false for 12h
-  locale: en_US # For region specific changes to price formatting
+  locale: de_DE # For region specific changes to price formatting
 ticker:
   currency: bitcoin,ethereum,cardano # symbols used on coingecko
+  stocks: BAYN.DE,BNTX,1810.HK # stocks from Alpha Vantage
   exchange: default # specific exchanges can be specified
-  fiatcurrency: usd,btc,gbp # 'fiat' currency
+  fiatcurrency: eur # 'fiat' currency
   sparklinedays: 1 # Time period shown on sparkline graph
   updatefrequency: 300 # How often price is refreshed (seconds) (lower limit 60s)
